@@ -1,19 +1,67 @@
-// Firebase Configuration
+
+
+
+
 const firebaseConfig = {
   apiKey: "AIzaSyA74YCQAfmUdu96AKIk41uSdiMS6imJz6E",
   authDomain: "taboche-pos.firebaseapp.com",
   databaseURL: "https://taboche-pos.firebaseio.com",
   projectId: "taboche-pos",
-  storageBucket: "taboche-pos.firebasestorage.app",
+  storageBucket: "taboche-pos.appspot.com",
   messagingSenderId: "902721301924",
   appId: "1:902721301924:web:c44ef0ade0ac7200ed6531",
   measurementId: "G-00TEQG2H1Z"
 };
 
+// Initialize Firebase
+const app = firebase.initializeApp(firebaseConfig);
+const database = firebase.database();
+const auth = firebase.auth();
+const tablesRef = database.ref('tables');
+const salesDataRef = database.ref('salesData');
+const orderHistoryRef = database.ref('orderHistory');
+const voidHistoryRef = database.ref('voidHistory');
+
+// Listen for changes in tables
+tablesRef.on('value', (snapshot) => {
+  tables = snapshot.val() || {};
+  renderTables(); // Update the UI
+});
+
+// Listen for changes in sales data
+salesDataRef.on('value', (snapshot) => {
+  salesData = snapshot.val() || {
+    totalSales: 0,
+    totalDiscounts: 0,
+    totalOrders: 0,
+    cashPayments: 0,
+    mobilePayments: 0
+  };
+});
+
+// Listen for changes in order history
+orderHistoryRef.on('value', (snapshot) => {
+  orderHistory = snapshot.val() || [];
+});
+
+// Listen for changes in void history
+voidHistoryRef.on('value', (snapshot) => {
+  voidHistory = snapshot.val() || [];
+});
+
+// Function to save data to Firebase
+function saveData() {
+  tablesRef.set(tables);
+  salesDataRef.set(salesData);
+  orderHistoryRef.set(orderHistory);
+  voidHistoryRef.set(voidHistory);
+}
+
+
+
 // Initialize tables from localStorage or create default structure
 let tables = JSON.parse(localStorage.getItem('tables')) || {};
 const tableNumbers = ['1', '2', '3', '4', '5', '6', '7', '8A', '8B', '9A', '9B', '10A', '10B', '10C', '11', '12'];
-
 tableNumbers.forEach(table => {
   if (!tables[`Table ${table}`]) {
     tables[`Table ${table}`] = { order: {}, totalPrice: 0, status: "available", payments: [], discount: 0, discountedTotal: 0, time: null };
@@ -32,6 +80,7 @@ let salesData = JSON.parse(localStorage.getItem('salesData')) || {
   cashPayments: 0,
   mobilePayments: 0
 };
+
 // Function to open the modal
 function openAddItemModal() {
   const modal = document.getElementById('addItemModal');
@@ -64,17 +113,15 @@ function selectItem(itemType) {
           <span>Rs 40</span>
         </div>
         <div class="extra-item" onclick="addItem('Extra Chicken', 120)">
-         <img src="images/extra_chicken.jpg" alt="Extra Chicken">
-         <span>Extra Chicken</span>
-         <span>Rs 120</span>
+          <img src="images/extra_chicken.jpg" alt="Extra Chicken">
+          <span>Extra Chicken</span>
+          <span>Rs 120</span>
         </div>
-         <div class="extra-item" onclick="addItem('Extra Buff', 100)">
-        <img src="images/extra_buff.jpg" alt="Extra Buff">
-        <span>Extra Buff</span>
-        <span>Rs 100</span>
+        <div class="extra-item" onclick="addItem('Extra Buff', 100)">
+          <img src="images/extra_buff.jpg" alt="Extra Buff">
+          <span>Extra Buff</span>
+          <span>Rs 100</span>
         </div>
-
-
         <div class="extra-item" onclick="addItem('Egg', 50)">
           <img src="images/egg.jpg" alt="Egg">
           <span>Egg</span>
@@ -119,54 +166,99 @@ function selectItem(itemType) {
   }
 }
 
-// Function to save table data to localStorage
+// Remove all localStorage references and rely solely on Firebase
 function saveData() {
-  localStorage.setItem('tables', JSON.stringify(tables));
+  tablesRef.set(tables);
+  salesDataRef.set(salesData);
+  orderHistoryRef.set(orderHistory);
+  voidHistoryRef.set(voidHistory);
 }
+
+// Initialize data exclusively from Firebase
+tablesRef.on('value', (snapshot) => tables = snapshot.val() || {});
+salesDataRef.on('value', (snapshot) => salesData = snapshot.val() || {/* default structure */});
+
+salesDataRef.on('value', (snapshot) => {
+  salesData = snapshot.val() || {
+    totalSales: 0,
+    totalDiscounts: 0,
+    totalOrders: 0,
+    cashPayments: 0,
+    mobilePayments: 0
+  };
+});
+
+orderHistoryRef.on('value', (snapshot) => {
+  orderHistory = snapshot.val() || [];
+});
+
+voidHistoryRef.on('value', (snapshot) => {
+  voidHistory = snapshot.val() || [];
+});
+
+// Initialize tables (only if Firebase has no data)
+tablesRef.once('value').then((snapshot) => {
+  if (!snapshot.exists()) {
+    const defaultTables = {};
+    tableNumbers.forEach(table => {
+      defaultTables[`Table ${table}`] = { 
+        order: {}, 
+        totalPrice: 0, 
+        status: "available", 
+        payments: [], 
+        discount: 0, 
+        discountedTotal: 0, 
+        time: null 
+      };
+    });
+    tablesRef.set(defaultTables);
+  }
+});
 
 // Function to add item to the order summary
 function addItem(itemName, itemPrice) {
-  if (!selectedTable) {
-    alert("Please select a table first!");
+  if (!selectedTable || !tables[selectedTable]) {
+    alert("Select a table first!");
     return;
   }
+  // ... rest of the code
 
   const table = tables[selectedTable];
-  if (!table.order[itemName]) {
-    table.order[itemName] = { price: itemPrice, quantity: 1 };
-  } else {
-    table.order[itemName].quantity += 1;
-  }
+  table.order[itemName] = table.order[itemName] || { price: itemPrice, quantity: 0 };
+  table.order[itemName].quantity += 1;
   table.totalPrice += itemPrice;
   table.discountedTotal = table.totalPrice * ((100 - table.discount) / 100);
   table.status = "occupied";
 
+  updateOrderSummary(itemName, itemPrice); // Update the UI
+  saveData(); // Save data to Firebase/localStorage
+}
+
+// Function to update the order summary UI
+function updateOrderSummary(itemName, itemPrice) {
   const orderItemsList = document.getElementById('order-items');
-  const existingItem = [...orderItemsList.children].find(item => item.dataset.name === itemName);
+  let existingItem = [...orderItemsList.children].find(item => item.dataset.name === itemName);
 
   if (existingItem) {
     const itemCount = parseInt(existingItem.dataset.count) + 1;
     existingItem.dataset.count = itemCount;
     existingItem.querySelector('.item-count').textContent = `x${itemCount}`;
-    existingItem.querySelector('.item-total').textContent = `Rs ${itemPrice * itemCount}`;
+    existingItem.querySelector('.item-total').textContent = `Rs ${(itemPrice * itemCount).toFixed(2)}`;
   } else {
     const orderItem = document.createElement('li');
     orderItem.className = 'order-item';
     orderItem.dataset.name = itemName;
     orderItem.dataset.count = 1;
     orderItem.innerHTML = `
-      ${itemName} <span class="item-count">x1</span> - <span class="item-total">Rs ${itemPrice}</span>
+      ${itemName} <span class="item-count">x1</span> - <span class="item-total">Rs ${itemPrice.toFixed(2)}</span>
       <button class="btn remove-btn" onclick="removeItem('${itemName}', ${itemPrice})">Remove</button>
     `;
     orderItemsList.appendChild(orderItem);
   }
 
-  // Update total price
-  const totalPriceElem = document.getElementById('total-price');
-  totalPriceElem.textContent = table.totalPrice.toFixed(2);
-
-  saveData(); // Save data to localStorage after adding item
+  document.getElementById('total-price').textContent = tables[selectedTable].totalPrice.toFixed(2);
 }
+
 
 // Function to remove item from the order summary
 function removeItem(itemName, itemPrice) {
@@ -182,7 +274,7 @@ function removeItem(itemName, itemPrice) {
     table.totalPrice -= item.price * item.quantity;
     delete table.order[itemName];
     table.discountedTotal = table.totalPrice * ((100 - table.discount) / 100);
-    
+
     const orderItemsList = document.getElementById('order-items');
     const orderItem = [...orderItemsList.children].find(item => item.dataset.name === itemName);
 
@@ -202,9 +294,6 @@ function removeItem(itemName, itemPrice) {
   }
 }
 
-
-
-
 // Function to update date, time, and day of the week
 function updateDateTime() {
   const datetimeElem = document.getElementById('datetime');
@@ -220,24 +309,25 @@ function updateDateTime() {
 updateDateTime();
 setInterval(updateDateTime, 1000);
 
-// Render tables in the dashboard
+// Update table status in real-time
 function renderTables() {
   const dashboard = document.getElementById('tables-dashboard');
-  if (!dashboard) {
-    console.error('Dashboard element not found');
-    return;
-  }
   dashboard.innerHTML = '';
   for (const [table, info] of Object.entries(tables)) {
-    if (table && info && table.startsWith('Table ')) {  // Ensure that table and info are not null or undefined
-      const tableCard = document.createElement('div');
-      tableCard.className = `table-card ${info.status}`;
-      tableCard.textContent = table;
-      tableCard.onclick = () => selectTable(table);
-      dashboard.appendChild(tableCard);
-    }
+    const tableCard = document.createElement('div');
+    tableCard.className = `table-card ${info.status}`;
+    tableCard.innerHTML = `
+      ${table}<br>
+      <span class="table-status">${info.status.toUpperCase()}</span>
+    `;
+    tableCard.onclick = () => selectTable(table);
+    dashboard.appendChild(tableCard);
   }
 }
+
+// Add real-time listener for table changes
+tablesRef.on('value', () => renderTables());
+
 
 function selectTable(table) {
   // Automatically finalize the current table's order before switching if new items were added
@@ -275,7 +365,6 @@ function selectTable(table) {
   // Disable remove buttons for finalized items
   disableRemoveButtonForFinalizedItems();
 }
-
 
 
 
@@ -475,25 +564,25 @@ function resetOrderSummary() {
   document.getElementById('order-items').innerHTML = '';
   document.getElementById('total-price').textContent = '0';
 }
-
 /**
- * Displays the order items on the UI.
- * @param {object} orderItems - The items in the order to display.
+ * Function to display order items and update the total price.
+ * @param {Object} orderItems - The items in the order.
  */
 function displayOrderItems(orderItems) {
   const orderItemsList = document.getElementById('order-items');
   orderItemsList.innerHTML = '';
   let totalPrice = 0;
+
   for (const [name, item] of Object.entries(orderItems)) {
     const orderItem = document.createElement('li');
     orderItem.classList.add('order-item'); // Add a class for styling
     orderItem.innerHTML = `
       <div class="item-header" onclick="promptAndAddComment('${name}')">
         <span class="item-name">${name}</span>
-        <span class="item-quantity">x ${item.quantity}</span>
-        <span class="item-price">Rs ${item.price}</span>
-        <span class="item-total">= Rs ${item.price * item.quantity}</span>
-        <button class="remove-item" data-name="${name}" data-table="${selectedTable}" onclick="removeFromOrder('${name}')">Remove</button>
+        <span class="item-quantity" style="margin-left: 20px;">x ${item.quantity}</span>
+        <span class="item-price" style="margin-left: 20px;">${item.price.toFixed(2)}</span>
+        <span class="item-total" style="margin-left: 20px;">= ${(item.price * item.quantity).toFixed(2)}</span>
+        <button class="remove-item" data-name="${name}" data-table="${selectedTable}" onclick="removeFromOrder('${name}')" style="margin-left: 20px;">Remove</button>
       </div>
       <div class="item-comments">${item.comments || ''}</div>
     `;
@@ -501,7 +590,16 @@ function displayOrderItems(orderItems) {
 
     totalPrice += item.price * item.quantity;
   }
-  document.getElementById('total-price').textContent = `Total: Rs ${totalPrice}`;
+
+  updateTotalPrice(totalPrice);
+}
+
+/**
+ * Updates the total price on the UI and saves data.
+ * @param {number} totalPrice - The total price of the order.
+ */
+function updateTotalPrice(totalPrice) {
+  document.getElementById('total-price').textContent = `Total: Rs ${totalPrice.toFixed(2)}`;
   tables[selectedTable].totalPrice = totalPrice;
   tables[selectedTable].discountedTotal = tables[selectedTable].totalPrice * ((100 - tables[selectedTable].discount) / 100);
   saveData();
@@ -527,8 +625,9 @@ function promptAndAddComment(name) {
  * @param {string} comment - The comment to add.
  */
 function addCommentToOrderItem(name, comment) {
-  if (tables[selectedTable].order[name]) {
-    tables[selectedTable].order[name].comments = comment;
+  const orderItem = tables[selectedTable].order[name];
+  if (orderItem) {
+    orderItem.comments = comment;
     updateOrderSummary();
     saveData();
   } else {
@@ -542,6 +641,7 @@ function addCommentToOrderItem(name, comment) {
 function updateOrderSummary() {
   const order = tables[selectedTable];
   displayOrderItems(order.order);
+
   const selectedTableElem = document.getElementById('selected-table');
   const selectedTimeElem = document.getElementById('selected-time');
   if (selectedTableElem) {
@@ -566,7 +666,6 @@ function disableRemoveButtonForFinalizedItems() {
   }
 }
 
-
 // Menu item click event to add items to the order
 document.querySelectorAll('.menu-item').forEach(item => {
   item.addEventListener('click', (event) => {
@@ -576,6 +675,35 @@ document.querySelectorAll('.menu-item').forEach(item => {
     addToOrder(name, price);
   });
 });
+
+/**
+ * Adds an item to the order.
+ * @param {string} name - The name of the item to add.
+ * @param {number} price - The price of the item to add.
+ */
+function addToOrder(name, price) {
+  if (!tables[selectedTable].order[name]) {
+    tables[selectedTable].order[name] = { quantity: 0, price: price, comments: '' };
+  }
+  tables[selectedTable].order[name].quantity += 1;
+  updateOrderSummary();
+  saveData();
+}
+
+/**
+ * Removes an item from the order.
+ * @param {string} name - The name of the item to remove.
+ */
+function removeFromOrder(name) {
+  const orderItem = tables[selectedTable].order[name];
+  if (orderItem) {
+    delete tables[selectedTable].order[name];
+    updateOrderSummary();
+    saveData();
+  } else {
+    alert('Item not found in order.');
+  }
+}
 
 
 
@@ -633,6 +761,12 @@ function finalizeOrder() {
 function changeTable() {
   const newTable = prompt("Enter new table number:");
   if (newTable && tables[`Table ${newTable}`]) {
+    // Check if there are new items added to the current order
+    if (tables[selectedTable].newItemsAdded) {
+      const confirmSwitch = confirm("Finalize current order before switching?");
+      if (confirmSwitch) finalizeOrder();
+    }
+
     tables[`Table ${newTable}`].order = { ...tables[selectedTable].order };
     tables[`Table ${newTable}`].totalPrice = tables[selectedTable].totalPrice;
     tables[`Table ${newTable}`].status = "occupied";
@@ -649,10 +783,11 @@ function changeTable() {
   }
 }
 
+
 let orderHistory = JSON.parse(localStorage.getItem('orderHistory')) || [];
 
 function saveOrderHistory() {
-  localStorage.setItem('orderHistory', JSON.stringify(orderHistory));
+  
 }
 
 // Function to display the QR code dialog
@@ -821,6 +956,7 @@ function resetPaymentDialog() {
   updatePaymentSummary(); // Refresh payment summary
 }
 
+
 function completeOrder() {
   const totalPriceElem = document.getElementById('total-price');
 
@@ -953,6 +1089,17 @@ document.addEventListener('keydown', function(event) {
   }
 });
 
+// Void items with Firebase transaction
+function voidItem(itemName) {
+  const tableRef = database.ref(`tables/${selectedTable}/order/${itemName}`);
+  tableRef.transaction((currentData) => {
+    if (currentData) {
+      currentData.voided = true;
+      currentData.voidTime = firebase.database.ServerValue.TIMESTAMP;
+    }
+    return currentData;
+  });
+}
 
 function applyDiscountHandler() {
   const discountInput = document.getElementById('discount');
@@ -1009,6 +1156,8 @@ function printReceipt() {
   printWindow.print();
   printWindow.close();
 }
+
+
 // Track void history
 let voidHistory = JSON.parse(localStorage.getItem('voidHistory')) || [];
 
@@ -1161,14 +1310,20 @@ function resetSalesReport() {
 
   // Reset the order history
   orderHistory = [];
-  localStorage.removeItem('orderHistory');
-
-  // Clear sales data from local storage
-  localStorage.removeItem('salesData');
-
+  
   // Clear void history
   voidHistory = [];
-  localStorage.removeItem('voidHistory');
+  
+  // Push the reset data to Firebase
+  salesDataRef.set(salesData).catch((error) => {
+    console.error("Error resetting sales data: ", error);
+  });
+  orderHistoryRef.set(orderHistory).catch((error) => {
+    console.error("Error resetting order history: ", error);
+  });
+  voidHistoryRef.set(voidHistory).catch((error) => {
+    console.error("Error resetting void history: ", error);
+  });
 
   alert('Sales report, total orders, order history, and void history have been reset.');
 
@@ -1176,6 +1331,7 @@ function resetSalesReport() {
   renderOrderHistory();
   generateSalesReport();
 }
+
 
 // Function to show home content
 function showHomeContent() {
@@ -1223,42 +1379,109 @@ function showMenuManagementContent() {
   toggleSidebar();
 }
 
-// Function to show sales reports content
-function showSalesReportsContent() {
-  const content = document.getElementById('content');
-  if (!content) {
-    console.error('Content element not found');
-    return;
-  }
-  content.innerHTML = `
-    <h1>Sales Reports</h1>
-    <button type="button" onclick="generateSalesReport()">Generate Sales Report</button>
-    <div id="salesReportOutput"></div>
+
+
+function generateSalesReport() {
+  const totalDiscounts = salesData.totalDiscounts || 0;
+  const totalOrders = salesData.totalOrders || 0;
+  const cashSales = salesData.cashSales || 0;
+  const mobileSales = salesData.mobileSales || 0;
+  const totalSales = salesData.totalSales || 0;
+
+  const report = `
+    <h3>Sales Report</h3>
+    <p>Total Discounts: Rs ${totalDiscounts}</p>
+    <p>Total Cash Sales: Rs ${cashSales}</p>
+    <p>Total Mobile Payment Sales: Rs ${mobileSales}</p>
+    <p>Total Orders: ${totalOrders}</p>
+    <p>Total Sales (Cash + Mobile Payment): Rs ${totalSales}</p>
+    <button onclick="printElement('modalContent')">Print Report</button>
+    <button onclick="closeModal()">Close</button>
   `;
-  toggleSidebar();
+  return report;
 }
 
-// Function to show settings content
+function displaySalesReport(report) {
+  const modalContent = document.getElementById('modalContent');
+  if (!modalContent) {
+    console.error('Element with ID "modalContent" not found.');
+    return;
+  }
+  modalContent.innerHTML = report;
+  openModal();
+}
+
+function openModal() {
+  const modal = document.getElementById('salesReportModal');
+  modal.style.display = 'block';
+
+  const span = document.getElementsByClassName('close')[0];
+  span.onclick = function() {
+    modal.style.display = 'none';
+  };
+
+  window.onclick = function(event) {
+    if (event.target === modal) {
+      modal.style.display = 'none';
+    }
+  };
+}
+
+function closeModal() {
+  const modal = document.getElementById('salesReportModal');
+  modal.style.display = 'none';
+}
+
+function showSalesReportsContent() {
+  const report = generateSalesReport();
+  displaySalesReport(report);
+}
+
+// Show Settings Content for Table Management
 function showSettingsContent() {
   const content = document.getElementById('content');
   if (!content) {
     console.error('Content element not found');
     return;
   }
+
   content.innerHTML = `
-    <h1>Settings</h1>
-    <form id="settingsForm">
-      <label for="currency">Currency:</label>
-      <input type="text" id="currency" name="currency"><br>
-      <label for="taxRate">Tax Rate:</label>
-      <input type="text" id="taxRate" name="taxRate"><br>
-      <label for="layoutColor">Layout Color:</label>
-      <input type="color" id="layoutColor" name="layoutColor"><br>
-      <button type="button" onclick="saveSettings()">Save Settings</button>
-    </form>
+    <div id="manage-tables">
+      <input type="text" id="add-table-input" placeholder="Enter new table number">
+      <button onclick="addTable()">Add Table</button>
+      <input type="text" id="remove-table-input" placeholder="Enter table number to remove">
+      <button onclick="removeTable()">Remove Table</button>
+    </div>
   `;
-  toggleSidebar();
 }
+
+// Function to Add Table
+function addTable() {
+  const newTableNumber = document.getElementById('add-table-input').value;
+  if (newTableNumber && !tables[`Table ${newTableNumber}`]) {
+    tables[`Table ${newTableNumber}`] = { order: {}, totalPrice: 0, status: "available", payments: [], discount: 0, discountedTotal: 0, time: null };
+    renderTables();
+    saveData();
+    document.getElementById('add-table-input').value = ''; // Clear input field after adding
+  } else {
+    alert('Table number already exists or invalid input!');
+  }
+}
+
+// Function to Remove Table
+function removeTable() {
+  const tableNumber = document.getElementById('remove-table-input').value;
+  if (tableNumber && tables[`Table ${tableNumber}`]) {
+    delete tables[`Table ${tableNumber}`];
+    renderTables();
+    saveData();
+    document.getElementById('remove-table-input').value = ''; // Clear input field after removing
+  } else {
+    alert('Table number not found or invalid input!');
+  }
+}
+
+
 
 // Function to show admin panel content
 function showAdminPanelContent() {
@@ -1329,14 +1552,16 @@ document.addEventListener('DOMContentLoaded', () => {
   scheduleMidnightReset(); // Schedule the daily reset
 });
 
-// Function to schedule a reset at midnight
-function scheduleMidnightReset() {
-  const now = new Date();
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
-  setTimeout(() => {
-    resetSalesReport();
-    scheduleMidnightReset(); // Schedule the next reset
-  }, msUntilMidnight);
+function scheduleDailyReset() {
+  const resetTimeRef = database.ref('resetTime');
+  resetTimeRef.on('value', (snapshot) => {
+    const lastReset = snapshot.val();
+    const now = Date.now();
+    if (!lastReset || now - lastReset > 86400000) { // 24h
+      resetSalesReport();
+      resetTimeRef.set(now);
+    }
+  });
 }
 
 // Function to save data to localStorage
@@ -1381,6 +1606,9 @@ function renderOrderHistory() {
         <td>Rs ${item.price * item.quantity}</td>
       </tr>`).join('');
 
+    // Calculate total price if it's not already calculated
+    const totalPrice = order.order ? Object.values(order.order).reduce((total, item) => total + item.price * item.quantity, 0) : 0;
+
     orderElem.innerHTML = `
       <div class="order-header">
         <h3>Order #${index + 1}</h3>
@@ -1388,7 +1616,7 @@ function renderOrderHistory() {
         <p><strong>Date:</strong> ${formattedTimestamp}</p>
       </div>
       <div class="order-details">
-        <p><strong>Total Price:</strong> Rs ${order.totalPrice}</p>
+        <p><strong>Total Price:</strong> Rs ${totalPrice}</p>
         <p><strong>Discount:</strong> ${order.discount}%</p>
         <p><strong>Discounted Total:</strong> Rs ${order.discountedTotal}</p>
       </div>
@@ -1432,3 +1660,23 @@ function checkOrderHistoryLength() {
 
 // Call this function to check the length of order history
 checkOrderHistoryLength();
+
+
+// Update UI based on Firebase Auth status
+firebase.auth().onAuthStateChanged((user) => {
+  if (user) {
+    database.ref('users/' + user.uid).once('value').then((snapshot) => {
+      const role = snapshot.val().role;
+      document.getElementById('user-role').textContent = role;
+      toggleAdminFeatures(role === 'admin');
+    });
+  }
+});
+
+function toggleAdminFeatures(isAdmin) {
+  document.querySelectorAll('.admin-feature').forEach(el => {
+    el.style.display = isAdmin ? 'block' : 'none';
+  });
+}
+
+
